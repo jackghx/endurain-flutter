@@ -21,6 +21,13 @@ import 'package:endurain/features/activity/services/activity_upload_service.dart
 ///   restored. The signal is intentionally an injected `Stream` so the app
 ///   stays dependency-free; a build that wants connectivity-driven draining can
 ///   pass a stream (e.g. from `connectivity_plus`) without changing this class.
+/// - optionally a backoff retry: when `retryBackoff` is non-empty and a drain
+///   leaves records failed, another drain is scheduled after the next delay in
+///   the list (the last delay repeats). This covers a server that becomes
+///   reachable without any connectivity change the OS reports, e.g. a VPN or
+///   tailnet route coming back while the device stays online. Timers only fire
+///   while the process runs, so this complements, not replaces, the triggers
+///   above.
 ///
 /// [drain] is single-flight: concurrent calls share the same in-progress run,
 /// so app-resume and a connectivity event cannot start two overlapping drains.
@@ -34,7 +41,9 @@ class ActivityUploadQueue {
     DiagnosticsRecorder? diagnostics,
     DateTime Function()? now,
     Stream<bool>? connectivitySignal,
+    List<Duration> retryBackoff = const [],
   }) : _uploadService = uploadService,
+       _retryBackoff = retryBackoff,
        _isUploadAuthorized = isUploadAuthorized ?? _alwaysAuthorized,
        _activeConnectionProfile = activeConnectionProfile,
        _diagnostics = diagnostics ?? const NoopDiagnosticsRecorder(),
@@ -84,14 +93,21 @@ class ActivityUploadQueue {
   final Future<ConnectionProfile?> Function()? _activeConnectionProfile;
   final DiagnosticsRecorder _diagnostics;
   final DateTime Function() _now;
+  final List<Duration> _retryBackoff;
 
   StreamSubscription<bool>? _connectivitySubscription;
+  Timer? _retryTimer;
+  int _retryAttempt = 0;
+  bool _disposed = false;
   final StreamController<void> _drainCompletedController =
       StreamController<void>.broadcast();
   Future<void>? _inFlightDrain;
   bool _followUpRequested = false;
 
   Stream<void> get onDrainCompleted => _drainCompletedController.stream;
+
+  /// Whether a backoff retry is scheduled because the last drain left failures.
+  bool get hasPendingRetry => _retryTimer != null;
 
   /// Re-attempts every locally-stored activity whose upload has not yet
   /// succeeded. Best-effort: a failure on one record does not stop the others,
@@ -104,29 +120,56 @@ class ActivityUploadQueue {
       _followUpRequested = true;
       return inFlight;
     }
-    return _inFlightDrain = _drainUntilSettled().whenComplete(() {
-      _inFlightDrain = null;
-      if (!_drainCompletedController.isClosed) {
-        _drainCompletedController.add(null);
-      }
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    var leftFailures = false;
+    return _inFlightDrain = _drainUntilSettled()
+        .then((failures) => leftFailures = failures)
+        .whenComplete(() {
+          _inFlightDrain = null;
+          _scheduleRetry(leftFailures);
+          if (!_drainCompletedController.isClosed) {
+            _drainCompletedController.add(null);
+          }
+        });
+  }
+
+  /// Schedules the next backoff drain when the last one left failures, and
+  /// resets the backoff once a drain completes without any.
+  void _scheduleRetry(bool leftFailures) {
+    if (!leftFailures || _retryBackoff.isEmpty || _disposed) {
+      _retryAttempt = 0;
+      return;
+    }
+    final index = _retryAttempt < _retryBackoff.length
+        ? _retryAttempt
+        : _retryBackoff.length - 1;
+    _retryAttempt++;
+    _retryTimer = Timer(_retryBackoff[index], () {
+      _retryTimer = null;
+      unawaited(drain());
     });
   }
 
-  Future<void> _drainUntilSettled() async {
+  /// Returns whether the final pass left any record failed.
+  Future<bool> _drainUntilSettled() async {
+    var leftFailures = false;
     do {
       _followUpRequested = false;
-      await _drain();
+      leftFailures = await _drain();
     } while (_followUpRequested);
+    return leftFailures;
   }
 
-  Future<void> _drain() async {
+  /// Runs one pass and returns whether any attempted record failed.
+  Future<bool> _drain() async {
     if (!_uploadService.isConfigured) {
-      return;
+      return false;
     }
     // Skip while unauthenticated (e.g. offline guest mode): activities stay
     // locally persisted as pending and drain once the user signs in.
     if (!await _isUploadAuthorized()) {
-      return;
+      return false;
     }
 
     final profileProvider = _activeConnectionProfile;
@@ -151,7 +194,7 @@ class ActivityUploadQueue {
         ? retryableRecords.toList()
         : _recordsForActiveProfile(retryableRecords.toList(), activeProfile);
     if (pending.isEmpty) {
-      return;
+      return false;
     }
 
     _diagnostics.recordBreadcrumbSync(
@@ -186,6 +229,7 @@ class ActivityUploadQueue {
       DiagnosticsEvents.activityUploadQueueDrainFinished,
       details: {'uploaded': uploaded, 'failed': failed},
     );
+    return failed > 0;
   }
 
   List<LocalActivityRecord> _recordsForActiveProfile(
@@ -203,6 +247,9 @@ class ActivityUploadQueue {
   }
 
   void dispose() {
+    _disposed = true;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     unawaited(_connectivitySubscription?.cancel());
     _connectivitySubscription = null;
     unawaited(_drainCompletedController.close());

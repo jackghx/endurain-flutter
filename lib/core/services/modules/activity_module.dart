@@ -88,8 +88,8 @@ class ActivityModule {
   }
 
   /// App-lifetime durable upload queue. Drains locally-stored activities whose
-  /// upload has not yet succeeded; triggered on app-resume (see `app.dart`) and
-  /// whenever connectivity is restored.
+  /// upload has not yet succeeded; triggered on app-resume (see `app.dart`),
+  /// whenever connectivity is restored, and on a backoff while uploads fail.
   late final ActivityUploadQueue uploadQueue = ActivityUploadQueue(
     repository: localActivities,
     uploadService: upload,
@@ -98,7 +98,18 @@ class ActivityModule {
     activeConnectionProfile: _auth.session.getConnectionProfile,
     diagnostics: _infra.diagnostics,
     connectivitySignal: _infra.connectivity.onOnlineChanged,
+    retryBackoff: uploadRetryBackoff,
   );
+
+  /// Delays between automatic re-drains while uploads keep failing (the last
+  /// one repeats), so an upload lands soon after the server becomes reachable
+  /// again even when the OS reports no connectivity change.
+  static const List<Duration> uploadRetryBackoff = [
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+    Duration(minutes: 15),
+  ];
 
   /// App-lifetime controller for the active recording session. Owned here so it
   /// survives tab navigation and can be used by non-map screens. Consumers

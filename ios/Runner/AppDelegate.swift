@@ -1,3 +1,4 @@
+import BackgroundTasks
 import Flutter
 import UIKit
 
@@ -9,6 +10,12 @@ import UIKit
 
   /// Strong reference for device-region settings queried by Flutter.
   private var deviceSettingsChannel: FlutterMethodChannel?
+
+  /// Channel used by background refresh to drain the Dart upload queue.
+  private var backgroundUploadChannel: FlutterMethodChannel?
+
+  /// Must match `BGTaskSchedulerPermittedIdentifiers` in Info.plist.
+  static let uploadDrainTaskIdentifier = "com.endurain.endurain.upload-drain"
 
   /// Whether iOS relaunched the process to deliver a location event.
   ///
@@ -26,7 +33,75 @@ import UIKit
     // recording is active. Without this the process would start, do nothing,
     // and the remainder of the activity would be lost.
     launchedForLocationEvent = launchOptions?[.location] != nil
+    registerUploadDrainTask()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // MARK: - Background upload drain
+
+  /// Registers the refresh task that retries failed uploads while suspended,
+  /// e.g. when the server was unreachable at the end of a recording and the
+  /// tailnet/VPN route comes back later. iOS decides when (and whether) the
+  /// task runs; app-resume and connectivity triggers in Dart still apply.
+  /// Registration must happen before launch finishes.
+  private func registerUploadDrainTask() {
+    BGTaskScheduler.shared.register(
+      forTaskWithIdentifier: Self.uploadDrainTaskIdentifier,
+      using: .main
+    ) { [weak self] task in
+      guard let self, let refreshTask = task as? BGAppRefreshTask else {
+        task.setTaskCompleted(success: false)
+        return
+      }
+      self.handleUploadDrain(refreshTask)
+    }
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(scheduleUploadDrain),
+      name: UIApplication.didEnterBackgroundNotification,
+      object: nil
+    )
+  }
+
+  @objc private func scheduleUploadDrain() {
+    let request = BGAppRefreshTaskRequest(identifier: Self.uploadDrainTaskIdentifier)
+    request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+    do {
+      try BGTaskScheduler.shared.submit(request)
+    } catch {
+      NSLog("Unable to schedule upload drain: %@", error.localizedDescription)
+    }
+  }
+
+  private func handleUploadDrain(_ task: BGAppRefreshTask) {
+    // Without a live engine (cold background launch) there is no Dart queue to
+    // drain; the next foreground resume drains instead.
+    guard let channel = backgroundUploadChannel else {
+      task.setTaskCompleted(success: false)
+      return
+    }
+    var completed = false
+    let complete: (Bool) -> Void = { success in
+      guard !completed else {
+        return
+      }
+      completed = true
+      task.setTaskCompleted(success: success)
+    }
+    task.expirationHandler = {
+      DispatchQueue.main.async { complete(false) }
+    }
+    channel.invokeMethod("drain", arguments: nil) { [weak self] result in
+      if result is FlutterError || (result as AnyObject?) === FlutterMethodNotImplemented {
+        complete(false)
+        return
+      }
+      if (result as? Bool) == true {
+        // Uploads still failing: ask for another window later.
+        self?.scheduleUploadDrain()
+      }
+      complete(true)
+    }
   }
 
   private func excludeHealthDataFromBackup() {
@@ -74,6 +149,14 @@ import UIKit
         }
       }
       deviceSettingsChannel = channel
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "EndurainBackgroundUploadChannel"
+    ) {
+      backgroundUploadChannel = FlutterMethodChannel(
+        name: "endurain/background_upload",
+        binaryMessenger: registrar.messenger()
+      )
     }
     if let registrar = engineBridge.pluginRegistry.registrar(
       forPlugin: "EndurainActivityRecorderChannel"

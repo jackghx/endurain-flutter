@@ -7,6 +7,7 @@ import 'package:endurain/core/services/app_scope.dart';
 import 'package:endurain/core/services/app_services.dart';
 import 'package:endurain/core/services/auth_service.dart';
 import 'package:endurain/core/services/diagnostics_service.dart';
+import 'package:endurain/features/activity/services/background_upload_channel.dart';
 import 'package:endurain/features/auth/controllers/auth_session_controller.dart';
 import 'package:endurain/shared/adaptive/adaptive.dart';
 
@@ -31,6 +32,7 @@ class _AppState extends State<App> with WidgetsBindingObserver {
   late final AuthSessionController _sessionController;
   late final bool _ownsSessionController;
   late final GoRouter _router;
+  late final BackgroundUploadChannel _backgroundUploadChannel;
 
   @override
   void initState() {
@@ -40,6 +42,11 @@ class _AppState extends State<App> with WidgetsBindingObserver {
     // that build it without supplying services — there is no shared global.
     _services = widget.services ?? AppServices();
     WidgetsBinding.instance.addObserver(this);
+    // Lets iOS background refresh drain uploads that failed while the server
+    // was unreachable (see AppDelegate.swift).
+    _backgroundUploadChannel = BackgroundUploadChannel(
+      queue: _services.activityUploadQueue,
+    )..attach();
     _ownsSessionController = widget.sessionController == null;
     _sessionController =
         widget.sessionController ??
@@ -63,6 +70,7 @@ class _AppState extends State<App> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _backgroundUploadChannel.detach();
     _router.dispose();
     if (_ownsSessionController) {
       _sessionController.dispose();

@@ -406,7 +406,104 @@ void main() {
 
       expect(attemptedKeys, ['q_conn']);
     });
+
+    test(
+      'retries on the backoff after a failed drain until it succeeds',
+      () async {
+        await _createRecord(
+          repository,
+          id: 'q_backoff',
+          status: LocalActivityUploadStatus.pending,
+        );
+        final statuses = [503, 503, 201];
+        var calls = 0;
+        final queue = ActivityUploadQueue(
+          repository: repository,
+          uploadService: _uploadServiceWithStatuses(statuses, () => calls++),
+          retryBackoff: const [Duration(milliseconds: 10)],
+        );
+        addTearDown(queue.dispose);
+
+        await queue.drain();
+        expect(calls, 1);
+
+        // Two more timer-driven drains: one more failure, then success.
+        for (var i = 0; i < 200 && calls < 3; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        await queue.onDrainCompleted.first.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {},
+        );
+
+        expect(calls, 3);
+        final record = (await repository.list()).single;
+        expect(record.uploadStatus, LocalActivityUploadStatus.uploaded);
+
+        // Nothing left failed, so no further retry is scheduled.
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(calls, 3);
+      },
+    );
+
+    test('does not retry on a backoff when none is configured', () async {
+      await _createRecord(
+        repository,
+        id: 'q_no_backoff',
+        status: LocalActivityUploadStatus.pending,
+      );
+      var calls = 0;
+      final queue = ActivityUploadQueue(
+        repository: repository,
+        uploadService: _uploadServiceWithStatuses([503], () => calls++),
+      );
+      addTearDown(queue.dispose);
+
+      await queue.drain();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(calls, 1);
+    });
+
+    test('dispose cancels a scheduled backoff retry', () async {
+      await _createRecord(
+        repository,
+        id: 'q_disposed',
+        status: LocalActivityUploadStatus.pending,
+      );
+      var calls = 0;
+      final queue = ActivityUploadQueue(
+        repository: repository,
+        uploadService: _uploadServiceWithStatuses([503], () => calls++),
+        retryBackoff: const [Duration(milliseconds: 20)],
+      );
+
+      await queue.drain();
+      queue.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      expect(calls, 1);
+    });
   });
+}
+
+/// Returns each status in [statuses] in turn (the last one repeats).
+ActivityUploadService _uploadServiceWithStatuses(
+  List<int> statuses,
+  void Function() onCall,
+) {
+  var index = 0;
+  return ActivityUploadService(
+    config: const ActivityUploadConfig(endpoint: '/upload', fieldName: 'file'),
+    uploadFile:
+        (_, _, _, {idempotencyKey, expectedOrigin, expectedProfileId}) async {
+          onCall();
+          final status =
+              statuses[index < statuses.length ? index : statuses.length - 1];
+          index++;
+          return http.StreamedResponse(const Stream<List<int>>.empty(), status);
+        },
+  );
 }
 
 ActivityUploadService _uploadServiceCapturing(

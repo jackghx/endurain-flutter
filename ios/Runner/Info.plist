@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.endurain.endurain.upload-drain</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -89,6 +93,8 @@
 	       with the screen off (see CoreLocationActivityRecorder.swift).
 	     - bluetooth-central: keeps a paired heart-rate/power/cadence sensor
 	       connected for the duration of that same recording.
+	     - fetch: background app refresh retries activity uploads that failed
+	       while the server was unreachable (see AppDelegate.swift).
 	     - audio: plays spoken distance/time/pace milestone announcements
 	       through AVSpeechSynthesizer while the recording is backgrounded
 	       (see AudioAnnouncer.swift). The audio session is activated only
@@ -100,6 +106,7 @@
 		<string>location</string>
 		<string>bluetooth-central</string>
 		<string>audio</string>
+		<string>fetch</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
