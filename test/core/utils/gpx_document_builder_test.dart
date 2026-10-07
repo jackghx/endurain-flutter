@@ -166,6 +166,25 @@ void main() {
       expect(gpx, contains('</ns3:wrapper>'));
     });
 
+    test('declares every namespace prefix it uses for power-only data', () {
+      final gpx = buildGpxDocument(
+        name: 'ride',
+        type: 'ride',
+        segments: [
+          [point(power: 250)],
+        ],
+      );
+
+      final usedPrefixes = RegExp(r'<\/?([A-Za-z0-9]+):')
+          .allMatches(gpx)
+          .map((match) => match.group(1)!)
+          .toSet();
+      expect(usedPrefixes, containsAll(<String>['gpxtpx', 'ns3']));
+      for (final prefix in usedPrefixes) {
+        expect(gpx, contains('xmlns:$prefix='), reason: 'unbound $prefix');
+      }
+    });
+
     test('nests hr, cadence, and power in one TrackPointExtension', () {
       final gpx = buildGpxDocument(
         name: 'ride',

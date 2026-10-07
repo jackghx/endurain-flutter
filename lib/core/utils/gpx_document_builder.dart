@@ -84,7 +84,8 @@ const String _powerNamespace =
 /// Each entry in [segments] becomes a `<trkseg>` (an empty list still emits an
 /// empty `<trkseg>`). Per-point `<gpxtpx:hr>` / `<gpxtpx:cad>` and a nested
 /// `<ns3:wrapper><ns3:power>` are emitted only when a point carries the
-/// corresponding value, and their namespaces are declared only when needed.
+/// corresponding value, and their namespaces are declared only when needed
+/// (power-only documents still declare `gpxtpx`, which wraps the power value).
 String buildGpxDocument({
   required String name,
   required String type,
@@ -107,7 +108,9 @@ String buildGpxDocument({
     ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
     ..write('<gpx version="1.1" creator="Endurain mobile app" ')
     ..write('xmlns="http://www.topografix.com/GPX/1/1"');
-  if (hasHeartRate || hasCadence) {
+  // Power is nested inside <gpxtpx:TrackPointExtension>, so the gpxtpx prefix
+  // must be bound whenever any sensor value is written.
+  if (hasHeartRate || hasCadence || hasPower) {
     buffer.write(' $_gpxtpxNamespace');
   }
   if (hasPower) {
