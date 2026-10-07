@@ -1,3 +1,5 @@
+> **Unofficial personal fork** of the Endurain mobile app — not the official Endurain project. See [FORK.md](FORK.md) for what changed and how to install it.
+
 <div align="center">
   <img src="assets/logo/brand_logo_light_theme.png" width="128" height="128">
 

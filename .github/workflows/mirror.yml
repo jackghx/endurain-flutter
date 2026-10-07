@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   mirror:
+    # Upstream-only: forks have no GitLab mirror or token.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     steps:
       - name: Push full mirror to GitLab

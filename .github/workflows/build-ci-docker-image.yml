@@ -28,6 +28,8 @@ env:
 jobs:
   build-image:
     name: Build and push builder image
+    # Upstream-only: the image is published under the endurain-project org.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

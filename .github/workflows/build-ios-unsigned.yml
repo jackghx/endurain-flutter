@@ -1,0 +1,114 @@
+name: Build iOS (unsigned, for sideloading)
+
+# Builds an unsigned .ipa for personal sideloading (e.g. Sideloadly with a free
+# Apple ID). Runs the Dart checks and the native XCTests first, so a broken
+# iOS change never produces an artifact. No secrets are used or needed: the
+# server URL and credentials are entered in the app at runtime.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - patches
+
+env:
+  FLUTTER_VERSION: 3.47.6
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Test and build unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install Flutter
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Disable tool analytics
+        run: |
+          flutter --disable-analytics
+          dart --disable-analytics
+          flutter --version
+          xcodebuild -version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Dart tests
+        run: flutter test
+
+      - name: Native iOS tests (XCTest on simulator)
+        run: |
+          set -euo pipefail
+          flutter build ios --simulator --debug
+          udid="$(xcrun simctl list devices available -j \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for r,v in d.items() if "iOS" in r for x in v if x["name"].startswith("iPhone")))')"
+          set +e
+          xcodebuild test \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -destination "id=$udid" \
+            -only-testing:RunnerTests \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/RunnerTests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            > "$RUNNER_TEMP/xctest.log" 2>&1
+          status=$?
+          set -e
+          grep -E "error:|failed|crash|Executed|TEST (SUCCEEDED|FAILED)" "$RUNNER_TEMP/xctest.log" || true
+          if [ "$status" -ne 0 ]; then
+            tail -n 200 "$RUNNER_TEMP/xctest.log"
+          fi
+          exit "$status"
+
+      - name: Upload XCTest results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xctest-results
+          path: |
+            ${{ runner.temp }}/RunnerTests.xcresult
+            ${{ runner.temp }}/xctest.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Build unsigned release app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          mkdir -p dist/Payload
+          cp -R build/ios/iphoneos/Runner.app dist/Payload/
+          version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+          sha="${GITHUB_SHA::8}"
+          (cd dist && zip -qry "endurain-fork-${version}-${sha}-unsigned.ipa" Payload)
+          rm -rf dist/Payload
+          ls -l dist
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-unsigned-ipa
+          path: dist/*.ipa
+          retention-days: 14
+          if-no-files-found: error

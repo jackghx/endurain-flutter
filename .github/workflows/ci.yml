@@ -22,6 +22,8 @@ permissions:
 jobs:
   format:
     name: Format
+    # Upstream-only: the CI container image is private to endurain-project.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/endurain-project/endurain-flutter-ci:3.47.3
@@ -39,6 +41,8 @@ jobs:
 
   analyze:
     name: Analyze
+    # Upstream-only: the CI container image is private to endurain-project.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/endurain-project/endurain-flutter-ci:3.47.3
@@ -56,6 +60,8 @@ jobs:
 
   test:
     name: Test
+    # Upstream-only: the CI container image is private to endurain-project.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/endurain-project/endurain-flutter-ci:3.47.3
@@ -86,6 +92,8 @@ jobs:
 
   android-unit-test:
     name: Android unit tests
+    # Upstream-only: the CI container image is private to endurain-project.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/endurain-project/endurain-flutter-ci:3.47.3
@@ -123,6 +131,8 @@ jobs:
 
   android-build:
     name: Android build
+    # Upstream-only: the CI container image is private to endurain-project.
+    if: github.repository_owner == 'endurain-project'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/endurain-project/endurain-flutter-ci:3.47.3
