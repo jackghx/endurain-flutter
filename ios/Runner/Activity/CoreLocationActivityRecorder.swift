@@ -31,8 +31,6 @@ final class CoreLocationActivityRecorder:
 
     /// Time gap (ms) beyond which a new track segment is started.
     private static let maxTimeGapMillis: Int64 = 30_000
-    private static let maxAccuracyMeters: CLLocationAccuracy = 100
-    private static let maxSpeedMetersPerSecond: CLLocationSpeed = 90
     private static let minTimeAnnouncementIntervalSeconds = 60
     private static let maxTimeAnnouncementIntervalSeconds = 3600
 
@@ -41,6 +39,7 @@ final class CoreLocationActivityRecorder:
     private let announcementStateCache = AnnouncementStateCache()
 
     private var lastPointEpochMillis: Int64?
+    private var fixFilter: LocationFixFilter?
     private var resumedFromPause = false
     private var isCollecting = false
     private var nextPointOffset = 0
@@ -99,6 +98,10 @@ final class CoreLocationActivityRecorder:
 
         restoreAnnouncementState()
         lastPointEpochMillis = IsoTime.toEpochMillis(store.lastPoint()?.timestamp)
+        fixFilter = LocationFixFilter(
+            collectionStartMillis: Int64(Date().timeIntervalSince1970 * 1000),
+            lastAcceptedMillis: lastPointEpochMillis
+        )
         nextPointOffset = store.pointCount()
         manager.startUpdatingLocation()
         startTerminationRecovery()
@@ -327,19 +330,15 @@ final class CoreLocationActivityRecorder:
         var producedIsNewSegment: [Bool] = []
 
         for location in locations {
-            guard location.horizontalAccuracy < 0 ||
-                location.horizontalAccuracy <= CoreLocationActivityRecorder.maxAccuracyMeters
-            else {
-                continue
-            }
             let rawMillis = Int64(location.timestamp.timeIntervalSince1970 * 1000)
             let effectiveMillis = rawMillis > 0
                 ? rawMillis
                 : Int64(Date().timeIntervalSince1970 * 1000)
-            if let previous = lastPointEpochMillis,
-                effectiveMillis > previous,
-                location.speed >= 0,
-                location.speed > CoreLocationActivityRecorder.maxSpeedMetersPerSecond {
+            guard fixFilter?.evaluate(
+                timestampMillis: effectiveMillis,
+                horizontalAccuracy: location.horizontalAccuracy,
+                speed: location.speed
+            ) == .accept else {
                 continue
             }
 
