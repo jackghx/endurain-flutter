@@ -59,6 +59,8 @@
 	<string>Endurain reads your workout history from HealthKit to let you import activities and keep your training log in sync.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Endurain uses HealthKit to import your workout history and keep your training log up to date.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Endurain connects to your self-hosted server when it is on your local network, to sign in and upload your recorded activities.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app uses location to show your position on the map and record activities, including while the app is in the background.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
